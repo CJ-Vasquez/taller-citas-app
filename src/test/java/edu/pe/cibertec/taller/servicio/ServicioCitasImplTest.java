@@ -232,4 +232,71 @@ class ServicioCitasImplTest {
 		assertEquals("Los servicios pesados solo se atienden entre las 08:00 y las 12:00", excepcion.getMessage());
 		verify(repositorioCitas, never()).save(any(Cita.class));
 	}
+
+	// =====================================================================
+	// PREGUNTA 03: Cancelacion de citas
+	// Cita CAMBIO_ACEITE de VAS-303 programada el 13/09/2026 a las 10:00.
+	// =====================================================================
+
+	@Test
+	@DisplayName("P03 - Cancelar cuando faltan exactamente 24 horas no genera penalidad y deja la cita CANCELADA")
+	void cancelarConExactamente24HorasDeAnticipacion() {
+		// Arrange
+		Mecanico mecanico = mecanicoCon(1L, TipoServicio.CAMBIO_ACEITE);
+		Cita cita = new Cita(10L, mecanico, PLACA, TipoServicio.CAMBIO_ACEITE, elDiaALas(10), 1,
+				EstadoCita.PROGRAMADA);
+		when(repositorioCitas.findById(10L)).thenReturn(Optional.of(cita));
+		when(proveedorFechaHora.ahora()).thenReturn(elDiaAnteriorALas(10));
+
+		// Act
+		ResultadoCancelacion resultado = servicioCitas.cancelarCita(10L);
+
+		// Assert
+		assertTrue(resultado.isExitoso());
+		assertEquals(0.0, resultado.getMontoPenalidad());
+		assertEquals(EstadoCita.CANCELADA, cita.getEstado());
+		verify(repositorioCitas, times(1)).save(cita);
+		verify(servicioNotificaciones, times(1)).notificarCitaCancelada(cita);
+	}
+
+	@Test
+	@DisplayName("P03 - Cancelar cuando faltan 2 horas aplica una penalidad de 50.00")
+	void cancelarConDosHorasDeAnticipacion() {
+		// Arrange
+		Mecanico mecanico = mecanicoCon(1L, TipoServicio.CAMBIO_ACEITE);
+		Cita cita = new Cita(11L, mecanico, PLACA, TipoServicio.CAMBIO_ACEITE, elDiaALas(10), 1,
+				EstadoCita.PROGRAMADA);
+		when(repositorioCitas.findById(11L)).thenReturn(Optional.of(cita));
+		when(proveedorFechaHora.ahora()).thenReturn(elDiaALas(8));
+
+		// Act
+		ResultadoCancelacion resultado = servicioCitas.cancelarCita(11L);
+
+		// Assert
+		assertTrue(resultado.isExitoso());
+		assertEquals(50.0, resultado.getMontoPenalidad());
+		assertEquals(EstadoCita.CANCELADA, cita.getEstado());
+		verify(repositorioCitas, times(1)).save(cita);
+		verify(servicioNotificaciones, times(1)).notificarCitaCancelada(cita);
+	}
+
+	@Test
+	@DisplayName("P03 - Cancelar una cita ya ATENDIDA lanza CitaNoCancelableException, no la modifica ni notifica")
+	void cancelarCitaYaAtendida() {
+		// Arrange
+		Mecanico mecanico = mecanicoCon(1L, TipoServicio.CAMBIO_ACEITE);
+		Cita cita = new Cita(12L, mecanico, PLACA, TipoServicio.CAMBIO_ACEITE, elDiaALas(10), 1,
+				EstadoCita.ATENDIDA);
+		when(repositorioCitas.findById(12L)).thenReturn(Optional.of(cita));
+
+		// Act
+		CitaNoCancelableException excepcion = assertThrows(CitaNoCancelableException.class,
+				() -> servicioCitas.cancelarCita(12L));
+
+		// Assert
+		assertEquals("Solo se pueden cancelar citas programadas", excepcion.getMessage());
+		assertEquals(EstadoCita.ATENDIDA, cita.getEstado());
+		verify(repositorioCitas, never()).save(any(Cita.class));
+		verify(servicioNotificaciones, never()).notificarCitaCancelada(any(Cita.class));
+	}
 }
