@@ -1,10 +1,35 @@
 package edu.pe.cibertec.taller.servicio;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
+
+import edu.pe.cibertec.taller.excepcion.CitaNoCancelableException;
+import edu.pe.cibertec.taller.excepcion.CitaNoEncontradaException;
+import edu.pe.cibertec.taller.excepcion.EspecialidadIncorrectaException;
+import edu.pe.cibertec.taller.excepcion.FechaInvalidaException;
+import edu.pe.cibertec.taller.excepcion.HorarioNoPermitidoException;
+import edu.pe.cibertec.taller.excepcion.HorarioOcupadoException;
+import edu.pe.cibertec.taller.excepcion.MecanicoNoEncontradoException;
+import edu.pe.cibertec.taller.excepcion.SinDisponibilidadException;
+import edu.pe.cibertec.taller.modelo.Cita;
+import edu.pe.cibertec.taller.modelo.EstadoCita;
+import edu.pe.cibertec.taller.modelo.Mecanico;
+import edu.pe.cibertec.taller.modelo.ResultadoCancelacion;
+import edu.pe.cibertec.taller.modelo.TipoServicio;
 import edu.pe.cibertec.taller.repositorio.RepositorioCitas;
 import edu.pe.cibertec.taller.repositorio.RepositorioMecanicos;
 import edu.pe.cibertec.taller.servicio.impl.ServicioCitasImpl;
 import edu.pe.cibertec.taller.util.ProveedorFechaHora;
 import edu.pe.cibertec.taller.util.ServicioNotificaciones;
+import java.time.LocalDateTime;
+import java.util.List;
+import java.util.Optional;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -12,8 +37,26 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
+/**
+ * Evaluacion T1 - Grupo A
+ * Alumno: Ciro Jelsin Vasquez Malpartida - Codigo: i202401303
+ *
+ * Datos personales de la evaluacion:
+ * - PLACA : VAS-303 (VAS de Vasquez + los ultimos 3 digitos del codigo)
+ * - DIA : 13 (ultimo digito del codigo 3 + 10), en setiembre de 2026
+ * - MECANICO: Ciro Vasquez (nombre + primer apellido)
+ */
 @ExtendWith(MockitoExtension.class)
 class ServicioCitasImplTest {
+
+	private static final String PLACA = "VAS-303";
+	private static final int DIA = 13;
+	private static final int MES = 9;
+	private static final int ANIO = 2026;
+	private static final String MECANICO = "Ciro Vasquez";
+
+	/** El reloj simulado del servicio se fija un dia antes del DIA, a las 08:00. */
+	private static final LocalDateTime AHORA = LocalDateTime.of(ANIO, MES, DIA - 1, 8, 0);
 
 	@Mock
 	private RepositorioMecanicos repositorioMecanicos;
@@ -33,164 +76,79 @@ class ServicioCitasImplTest {
 	void inicializar() {
 		servicioCitas = new ServicioCitasImpl(repositorioMecanicos, repositorioCitas,
 				proveedorFechaHora, servicioNotificaciones);
-		// TODO: crear aqui los datos comunes que necesiten los tests
 	}
 
+	/** Devuelve el DIA de la evaluacion (13/09/2026) a la hora indicada. */
+	private LocalDateTime elDiaALas(int hora) {
+		return LocalDateTime.of(ANIO, MES, DIA, hora, 0);
+	}
+
+	/** Devuelve el dia anterior al DIA (12/09/2026) a la hora indicada. */
+	private LocalDateTime elDiaAnteriorALas(int hora) {
+		return LocalDateTime.of(ANIO, MES, DIA - 1, hora, 0);
+	}
+
+	private Mecanico mecanicoCon(Long id, TipoServicio especialidad) {
+		return new Mecanico(id, MECANICO, especialidad);
+	}
+
+	// =====================================================================
+	// PREGUNTA 01: Registro de citas
+	// =====================================================================
+
 	@Test
-	@DisplayName("Agendar una cita valida la guarda, notifica y la retorna en estado PROGRAMADA")
-	void agendarCitaExitosa() {
+	@DisplayName("P01 - Registrar un CAMBIO_ACEITE para VAS-303 el 13/09/2026 a las 10:00 lo guarda y notifica una sola vez")
+	void registrarCambioAceiteExitoso() {
 		// Arrange
-		// TODO
+		Mecanico mecanico = mecanicoCon(1L, TipoServicio.CAMBIO_ACEITE);
+		LocalDateTime inicio = elDiaALas(10);
+		when(repositorioMecanicos.findById(1L)).thenReturn(Optional.of(mecanico));
+		when(proveedorFechaHora.ahora()).thenReturn(AHORA);
+		when(repositorioCitas.save(any(Cita.class))).thenAnswer(invocacion -> invocacion.getArgument(0));
 
 		// Act
-		// TODO
+		Cita citaRegistrada = servicioCitas.agendarCita(1L, PLACA, TipoServicio.CAMBIO_ACEITE, inicio);
 
 		// Assert
-		// TODO: verificar estado, duracion, save y notificacion
+		assertEquals(EstadoCita.PROGRAMADA, citaRegistrada.getEstado());
+		assertEquals(1, citaRegistrada.getDuracionHoras());
+		assertEquals(PLACA, citaRegistrada.getPlacaVehiculo());
+		assertEquals(inicio, citaRegistrada.getFechaHoraInicio());
+		assertEquals(MECANICO, citaRegistrada.getMecanico().getNombre());
+		verify(repositorioCitas, times(1)).save(any(Cita.class));
+		verify(servicioNotificaciones, times(1)).notificarCitaAgendada(citaRegistrada);
 	}
 
 	@Test
-	@DisplayName("Agendar con un mecanico inexistente lanza MecanicoNoEncontradoException")
-	void agendarConMecanicoInexistente() {
+	@DisplayName("P01 - Registrar con el mecanico id 99 que no existe lanza MecanicoNoEncontradoException y no guarda nada")
+	void registrarConMecanicoInexistente() {
 		// Arrange
-		// TODO
-
-		// Act y Assert
-		// TODO
-	}
-
-	@Test
-	@DisplayName("Agendar cuando la especialidad no coincide lanza EspecialidadIncorrectaException")
-	void agendarConEspecialidadIncorrecta() {
-		// Arrange
-		// TODO
-
-		// Act y Assert
-		// TODO
-	}
-
-	@Test
-	@DisplayName("Un servicio pesado a las 15:00 se rechaza con HorarioNoPermitidoException")
-	void agendarServicioPesadoEnLaTarde() {
-		// Arrange
-		// TODO
-
-		// Act y Assert
-		// TODO
-	}
-
-	@Test
-	@DisplayName("Un servicio pesado a las 09:00 se acepta y se guarda")
-	void agendarServicioPesadoEnLaManana() {
-		// Arrange
-		// TODO
+		when(repositorioMecanicos.findById(99L)).thenReturn(Optional.empty());
 
 		// Act
-		// TODO
+		MecanicoNoEncontradoException excepcion = assertThrows(MecanicoNoEncontradoException.class,
+				() -> servicioCitas.agendarCita(99L, PLACA, TipoServicio.CAMBIO_ACEITE, elDiaALas(10)));
 
 		// Assert
-		// TODO
+		assertEquals("No existe un mecanico con el id 99", excepcion.getMessage());
+		verify(repositorioCitas, never()).save(any(Cita.class));
+		verify(servicioNotificaciones, never()).notificarCitaAgendada(any(Cita.class));
 	}
 
 	@Test
-	@DisplayName("Agendar en una fecha del pasado lanza FechaInvalidaException")
-	void agendarConFechaEnElPasado() {
+	@DisplayName("P01 - Registrar una REPARACION_MOTOR con un mecanico de CAMBIO_ACEITE lanza EspecialidadIncorrectaException y no guarda nada")
+	void registrarConEspecialidadIncorrecta() {
 		// Arrange
-		// TODO: recuerden mockear proveedorFechaHora.ahora()
-
-		// Act y Assert
-		// TODO
-	}
-
-	@Test
-	@DisplayName("Agendar sobre una cita ya programada se rechaza con HorarioOcupadoException")
-	void agendarConSuperposicion() {
-		// Arrange
-		// TODO
-
-		// Act y Assert
-		// TODO
-	}
-
-	@Test
-	@DisplayName("Una cita que empieza justo cuando termina otra se acepta")
-	void agendarCitaContigua() {
-		// Arrange
-		// TODO: una cita existente que termina a las 10:00 y la nueva que empieza a las 10:00
+		Mecanico mecanico = mecanicoCon(2L, TipoServicio.CAMBIO_ACEITE);
+		when(repositorioMecanicos.findById(2L)).thenReturn(Optional.of(mecanico));
 
 		// Act
-		// TODO
+		EspecialidadIncorrectaException excepcion = assertThrows(EspecialidadIncorrectaException.class,
+				() -> servicioCitas.agendarCita(2L, PLACA, TipoServicio.REPARACION_MOTOR, elDiaALas(10)));
 
 		// Assert
-		// TODO
-	}
-
-	@Test
-	@DisplayName("Cancelar con 24 horas o mas de anticipacion no genera penalidad")
-	void cancelarConAnticipacionSuficiente() {
-		// Arrange
-		// TODO
-
-		// Act
-		// TODO
-
-		// Assert
-		// TODO: penalidad 0, estado CANCELADA, notificacion
-	}
-
-	@Test
-	@DisplayName("Cancelar con menos de 24 horas aplica una penalidad de 50.00")
-	void cancelarConAvisoTardio() {
-		// Arrange
-		// TODO
-
-		// Act
-		// TODO
-
-		// Assert
-		// TODO
-	}
-
-	@Test
-	@DisplayName("Cancelar una cita inexistente lanza CitaNoEncontradaException")
-	void cancelarCitaInexistente() {
-		// Arrange
-		// TODO
-
-		// Act y Assert
-		// TODO
-	}
-
-	@Test
-	@DisplayName("Cancelar una cita que ya fue cancelada lanza CitaNoCancelableException")
-	void cancelarCitaYaCancelada() {
-		// Arrange
-		// TODO
-
-		// Act y Assert
-		// TODO
-	}
-
-	@Test
-	@DisplayName("Buscar mecanico disponible retorna el primero sin citas superpuestas")
-	void buscarMecanicoDisponibleRetornaPrimeroLibre() {
-		// Arrange
-		// TODO: dos mecanicos de la misma especialidad, el primero ocupado
-
-		// Act
-		// TODO
-
-		// Assert
-		// TODO
-	}
-
-	@Test
-	@DisplayName("Buscar mecanico cuando ninguno esta libre lanza SinDisponibilidadException")
-	void buscarMecanicoSinDisponibilidad() {
-		// Arrange
-		// TODO
-
-		// Act y Assert
-		// TODO
+		assertEquals("El mecanico no atiende el servicio REPARACION_MOTOR", excepcion.getMessage());
+		verify(repositorioCitas, never()).save(any(Cita.class));
+		verify(servicioNotificaciones, never()).notificarCitaAgendada(any(Cita.class));
 	}
 }
